@@ -1,5 +1,5 @@
 # Use a supported OpenJDK 21 or later image as the base image for Java applications
-FROM openjdk:21-jdk-slim as build
+FROM eclipse-temurin:17-jdk-jammy as build
 
 # Set the working directory inside the container
 WORKDIR /app
@@ -19,7 +19,7 @@ COPY src ./src
 RUN ./mvnw package -DskipTests
 
 # Use a smaller base image for the final stage
-FROM openjdk:21-jre-slim
+FROM eclipse-temurin:17-jre-jammy
 
 # Set the working directory
 WORKDIR /app
@@ -28,7 +28,7 @@ WORKDIR /app
 COPY --from=build /app/target/*.jar app.jar
 
 # Expose the port the application runs on
-EXPOSE 8080
+EXPOSE 8081
 
 # Run the application
 ENTRYPOINT ["java", "-jar", "app.jar"]
