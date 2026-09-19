@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trading.screener.entity.StockData;
 import com.trading.screener.repository.StockDataRepository;
-import com.trading.screener.repository.AnnouncementSummaryRepository; // <-- Imported
+import com.trading.screener.repository.AnnouncementSummaryRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ByteArrayResource;
@@ -26,7 +26,6 @@ public class AnnouncementService {
     @Autowired
     private StockDataRepository stockDataRepository;
 
-    // 1. Inject the summary repository to check for existing files
     @Autowired
     private AnnouncementSummaryRepository summaryRepository; 
 
@@ -35,6 +34,10 @@ public class AnnouncementService {
 
     @Value("${kafka.topic.pdf-chunks}")
     private String kafkaTopic;
+
+    // Inject the comma-separated phrases from application.properties
+    @Value("${screener.ignore.phrases:Copy of Newspaper Publication,Spurt in Volume}")
+    private List<String> ignorePhrases;
 
     private final RestTemplate restTemplate = new RestTemplate();
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -88,16 +91,37 @@ public class AnnouncementService {
 
                 if (root.isArray()) {
                     for (JsonNode announcement : root) {
+                        
+                        // ==========================================
+                        // 1. DYNAMIC KEYWORD FILTER CHECK
+                        // ==========================================
+                        String description = announcement.path("desc").asText("").toLowerCase();
+                        boolean shouldSkip = false;
+                        
+                        if (ignorePhrases != null) {
+                            for (String phrase : ignorePhrases) {
+                                if (!phrase.trim().isEmpty() && description.contains(phrase.trim().toLowerCase())) {
+                                    System.out.println(" SKIPPING ANNOUNCEMENT: " + symbol + " | Matched filter: '" + phrase.trim() + "'");
+                                    shouldSkip = true;
+                                    break;
+                                }
+                            }
+                        }
+                        
+                        if (shouldSkip) {
+                            continue; // Move to the next announcement
+                        }
+
                         String attachmentUrl = announcement.path("attchmntFile").asText(null);
                         
                         if (attachmentUrl != null && attachmentUrl.startsWith("http")) {
                             
                             // ==========================================
-                            // 2. IDEMPOTENCY CHECK: Check DB before processing
+                            // 2. IDEMPOTENCY CHECK
                             // ==========================================
                             if (summaryRepository.existsByDocumentId(attachmentUrl)) {
                                 System.out.println(" SKIPPING DOWNLOAD: " + symbol + " | Already completely processed in DB -> " + attachmentUrl);
-                                continue; // Skip to the next announcement immediately
+                                continue; 
                             }
                             
                             processAndPublishAttachment(symbol, attachmentUrl, apiHeaders);
