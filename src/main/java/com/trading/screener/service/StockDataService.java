@@ -25,7 +25,6 @@ public class StockDataService {
     public void processAndSaveExcel(MultipartFile file) throws Exception {
         String fileName = file.getOriginalFilename();
 
-        // 1. Check if the file has already been processed
         if (fileName != null && repository.existsByUploadedFileName(fileName)) {
             throw new Exception("File '" + fileName + "' has already been uploaded and processed.");
         }
@@ -33,7 +32,6 @@ public class StockDataService {
         List<StockDataDto> dtoList = new ArrayList<>();
         DataFormatter dataFormatter = new DataFormatter(); 
 
-        // 2. Read the Excel File
         try (InputStream is = file.getInputStream(); Workbook workbook = new XSSFWorkbook(is)) {
             Sheet sheet = workbook.getSheetAt(0);
             Iterator<Row> rows = sheet.iterator();
@@ -54,38 +52,48 @@ public class StockDataService {
 
                 StockDataDto dto = new StockDataDto();
 
-                String srNoStr = dataFormatter.formatCellValue(currentRow.getCell(0));
-                dto.setSrNo((int) Double.parseDouble(srNoStr.trim()));
+                // 1. Sr No
+                String srNoStr = cleanNumericString(dataFormatter.formatCellValue(currentRow.getCell(0)));
+                dto.setSrNo((int) Double.parseDouble(srNoStr));
+
+                // 2. Strings
                 dto.setStockName(dataFormatter.formatCellValue(currentRow.getCell(1)).trim());
                 dto.setSymbol(dataFormatter.formatCellValue(currentRow.getCell(2)).trim());
                 
-                String closePriceStr = dataFormatter.formatCellValue(currentRow.getCell(3)).replace(",", "").trim();
+                // 3. Close Price
+                String closePriceStr = cleanNumericString(dataFormatter.formatCellValue(currentRow.getCell(3)));
                 dto.setClosePrice(new BigDecimal(closePriceStr));
                 
-                String percentStr = dataFormatter.formatCellValue(currentRow.getCell(4)).replace("%", "").trim();
+                // 4. Percent Change (Now protected from commas)
+                String percentStr = cleanNumericString(dataFormatter.formatCellValue(currentRow.getCell(4)));
                 dto.setPercentChange(new BigDecimal(percentStr));
 
-                String volumeStr = dataFormatter.formatCellValue(currentRow.getCell(5))
-                        .replace(",", "")
-                        .replace(".", "")
-                        .trim();
-                dto.setVolume(Long.parseLong(volumeStr));
+                // 5. Volume (Parsed safely through Double to handle POI's ".0" trailing decimals)
+                String volumeStr = cleanNumericString(dataFormatter.formatCellValue(currentRow.getCell(5)));
+                dto.setVolume((long) Double.parseDouble(volumeStr));
 
                 dtoList.add(dto);
             }
         }
 
-        // 3. Dump all data into the database
         List<StockData> entitiesToSave = new ArrayList<>();
-
         for (StockDataDto dto : dtoList) {
             StockData newStock = mapToEntity(dto);
             newStock.setLastUpdated(LocalDateTime.now());
-            newStock.setUploadedFileName(fileName); // Save the file name with the record
+            newStock.setUploadedFileName(fileName); 
             entitiesToSave.add(newStock);
         }
 
         repository.saveAll(entitiesToSave);
+    }
+
+    // --- NEW HELPER METHOD ---
+    private String cleanNumericString(String value) {
+        if (value == null || value.trim().isEmpty() || value.equals("-")) {
+            return "0";
+        }
+        // Removes commas, percent signs, and spaces. Leaves decimals intact.
+        return value.replace(",", "").replace("%", "").trim();
     }
 
     private StockData mapToEntity(StockDataDto dto) {
