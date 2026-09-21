@@ -147,7 +147,9 @@ public ResponseEntity<byte[]> exportSummariesBySymbol(@PathVariable("symbol") St
                     .body(out.toByteArray());
         }
     } catch (Exception e) {
-        return ResponseEntity.status(org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR).body(null);
+        e.printStackTrace(); // This prints the exact red error lines in your server logs
+        return ResponseEntity.status(org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(("API Error: " + e.getMessage()).getBytes());
     }
 }
 
