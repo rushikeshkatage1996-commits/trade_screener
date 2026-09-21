@@ -9,16 +9,17 @@ public class AnnouncementSummary {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
-
+    
+    @Column(name = "symbol")
     private String symbol;
     
-    @Column(length = 1000)
+    @Column(name = "document_id", length = 1000)
     private String documentId;
 
+    @Column(name = "total_chunks")
     private int totalChunks;
 
-    // The stitched AI Summary
-    @Column(columnDefinition = "LONGTEXT")
+    @Column(name = "summary_text", columnDefinition = "LONGTEXT")
     private String summaryText;
 
     // Getters and Setters
