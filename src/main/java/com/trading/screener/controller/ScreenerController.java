@@ -44,28 +44,65 @@ public class ScreenerController {
         }
     }
 
-    /**
-     * 3. Upload an Excel file, extract symbols dynamically from the 'Symbol' column,
-     * and return matching summaries from MySQL in a single database call.
-     * Content-Type: multipart/form-data
-     */
-    @PostMapping(value = "/announcements/summaries/by-excel", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    public ResponseEntity<?> getSummariesByExcel(@RequestParam("file") MultipartFile file) {
-        try {
-            if (file.isEmpty()) {
-                return ResponseEntity.badRequest().body(Collections.singletonMap("error", "File is empty"));
+@PostMapping(value = "/announcements/summaries/export", consumes = MediaType.MULTIPART_FORM_DATA_VALUE, produces = MediaType.APPLICATION_OCTET_STREAM_VALUE)
+public ResponseEntity<byte[]> exportSummariesToExcel(
+        @RequestParam("file") MultipartFile file,
+        @RequestParam(value = "fileName", required = false) String customFileName) {
+    try {
+        // 1. Determine the base filename from the form data, or fallback to the file's original name
+        String baseName = (customFileName != null && !customFileName.trim().isEmpty()) 
+                ? customFileName.trim() 
+                : file.getOriginalFilename();
+        
+        if (baseName == null || baseName.trim().isEmpty()) {
+            baseName = "Stock_Data.xlsx";
+        }
+        
+        // Ensure it has the correct extension just in case it was missed in the form
+        if (!baseName.toLowerCase().endsWith(".xlsx")) {
+            baseName += ".xlsx";
+        }
+        
+        String exportFileName = "Summary_" + baseName;
+
+        // 2. Fetch matching summaries from the DB
+        List<AnnouncementSummary> summaries = summaryRetrievalService.getSummariesFromExcel(file);
+
+        // 3. Create the Excel file in memory
+        try (org.apache.poi.xssf.usermodel.XSSFWorkbook workbook = new org.apache.poi.xssf.usermodel.XSSFWorkbook();
+             java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream()) {
+             
+            org.apache.poi.ss.usermodel.Sheet sheet = workbook.createSheet("Summaries");
+            
+            // Create Headers
+            org.apache.poi.ss.usermodel.Row headerRow = sheet.createRow(0);
+            headerRow.createCell(0).setCellValue("Symbol");
+            headerRow.createCell(1).setCellValue("Document ID");
+            headerRow.createCell(2).setCellValue("Summary");
+
+            // Populate Data
+            int rowIdx = 1;
+            for (AnnouncementSummary summary : summaries) {
+                org.apache.poi.ss.usermodel.Row row = sheet.createRow(rowIdx++);
+                row.createCell(0).setCellValue(summary.getSymbol());
+                row.createCell(1).setCellValue(summary.getDocumentId());
+                row.createCell(2).setCellValue(summary.getSummaryText());
             }
 
-            List<AnnouncementSummary> summaries = summaryRetrievalService.getSummariesFromExcel(file);
-            return ResponseEntity.ok(summaries);
+            workbook.write(out);
 
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(Collections.singletonMap("error", e.getMessage()));
-        } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Collections.singletonMap("error", "Failed to retrieve summaries: " + e.getMessage()));
+            // 4. Set headers to force a download with the quoted filename
+            org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
+            headers.add("Content-Disposition", "attachment; filename=\"" + exportFileName + "\"");
+
+            return ResponseEntity.ok()
+                    .headers(headers)
+                    .body(out.toByteArray());
         }
+    } catch (Exception e) {
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(null);
     }
+}
 
     /**
      * 4. Direct lookup: Fetch all summaries for a single stock symbol.
