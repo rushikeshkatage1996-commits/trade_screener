@@ -108,38 +108,54 @@ public ResponseEntity<byte[]> exportSummariesToExcel(
      * 4. Direct lookup: Fetch all summaries for a single stock symbol.
      */
 @GetMapping(value = "/announcements/summaries/{symbol}", produces = MediaType.APPLICATION_OCTET_STREAM_VALUE)
-@PostMapping(value = "/announcements/summaries/export-csv", consumes = MediaType.MULTIPART_FORM_DATA_VALUE, produces = "text/csv")
-public ResponseEntity<byte[]> exportSummariesToCsv( ... ) {
-    // ... same file logic ...
-    String exportFileName = "Summary_" + baseName.replace(".xlsx", ".csv");
-    // ... fetch summaries ...
+public ResponseEntity<byte[]> exportSummariesBySymbol(@PathVariable("symbol") String symbol) {
+    try {
+        String cleanSymbol = symbol.trim().toUpperCase();
+        
+        // 1. Fetch matching summaries from the DB
+        List<AnnouncementSummary> summaries = summaryRepository.findBySymbolIn(List.of(cleanSymbol));
 
-    StringBuilder csv = new StringBuilder();
-    // Header
-    csv.append("Symbol,Document ID,Summary\n");
+        // 2. Create the Excel file in memory
+        try (org.apache.poi.xssf.usermodel.XSSFWorkbook workbook = new org.apache.poi.xssf.usermodel.XSSFWorkbook();
+             java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream()) {
+             
+            org.apache.poi.ss.usermodel.Sheet sheet = workbook.createSheet(cleanSymbol + " Summaries");
+            
+            // Create Headers
+            org.apache.poi.ss.usermodel.Row headerRow = sheet.createRow(0);
+            headerRow.createCell(0).setCellValue("Symbol");
+            headerRow.createCell(1).setCellValue("Document ID");
+            headerRow.createCell(2).setCellValue("Summary");
 
-    for (AnnouncementSummary summary : summaries) {
-        csv.append(escapeCsv(summary.getSymbol())).append(",");
-        csv.append(escapeCsv(summary.getDocumentId())).append(",");
-        csv.append(escapeCsv(summary.getSummaryText())).append("\n");
+            // Populate Data
+            int rowIdx = 1;
+            for (AnnouncementSummary summary : summaries) {
+                org.apache.poi.ss.usermodel.Row row = sheet.createRow(rowIdx++);
+                row.createCell(0).setCellValue(summary.getSymbol());
+                row.createCell(1).setCellValue(summary.getDocumentId());
+                
+                // CORRECTED: Safely handle the 32,767 character limit for Excel cells
+                String text = summary.getSummaryText();
+                if (text != null && text.length() > 32700) {
+                    text = text.substring(0, 32700) + "\n\n... [TRUNCATED: Exceeded Excel 32,767 cell limit]";
+                }
+                row.createCell(2).setCellValue(text != null ? text : "");
+            }
+
+            workbook.write(out);
+
+            // 3. Set headers to force a download with the dynamic filename
+            org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
+            headers.add("Content-Disposition", "attachment; filename=\"Summary_" + cleanSymbol + ".xlsx\"");
+
+            return ResponseEntity.ok()
+                    .headers(headers)
+                    .body(out.toByteArray());
+        }
+    } catch (Exception e) {
+        e.printStackTrace(); // This prints the exact red error lines in your server logs
+        return ResponseEntity.status(org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(("API Error: " + e.getMessage()).getBytes());
     }
-
-    HttpHeaders headers = new HttpHeaders();
-    headers.add("Content-Disposition", "attachment; filename=\"" + exportFileName + "\"");
-
-    return ResponseEntity.ok()
-            .headers(headers)
-            .body(csv.toString().getBytes(StandardCharsets.UTF_8));
-}
-
-private String escapeCsv(String data) {
-    if (data == null) return "";
-    // If data contains comma, quote, or newline, it must be quoted.
-    // Quotes inside the data must be escaped by doubling them ("").
-    String escapedData = data.replace("\"", "\"\"");
-    if (escapedData.contains(",") || escapedData.contains("\"") || escapedData.contains("\n")) {
-        return "\"" + escapedData + "\"";
-    }
-    return escapedData;
 }
 }
