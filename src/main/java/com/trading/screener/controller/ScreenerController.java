@@ -107,6 +107,7 @@ public ResponseEntity<byte[]> exportSummariesToExcel(
     /**
      * 4. Direct lookup: Fetch all summaries for a single stock symbol.
      */
+@GetMapping(value = "/announcements/summaries/{symbol}", produces = MediaType.APPLICATION_OCTET_STREAM_VALUE)
 @PostMapping(value = "/announcements/summaries/export-csv", consumes = MediaType.MULTIPART_FORM_DATA_VALUE, produces = "text/csv")
 public ResponseEntity<byte[]> exportSummariesToCsv( ... ) {
     // ... same file logic ...
@@ -141,6 +142,4 @@ private String escapeCsv(String data) {
     }
     return escapedData;
 }
-}
-
 }
