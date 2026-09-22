@@ -44,8 +44,8 @@ public class ScreenerController {
         }
     }
 
-@PostMapping(value = "/announcements/summaries/export", consumes = MediaType.MULTIPART_FORM_DATA_VALUE, produces = MediaType.APPLICATION_OCTET_STREAM_VALUE)
-public ResponseEntity<byte[]> exportSummariesToExcel(
+@PostMapping(value = "/announcements/summaries/export", consumes = MediaType.MULTIPART_FORM_DATA_VALUE, produces = "text/csv; charset=UTF-8")
+public ResponseEntity<byte[]> exportSummariesToCsv(
         @RequestParam("file") MultipartFile file,
         @RequestParam(value = "fileName", required = false) String customFileName) {
     try {
@@ -55,52 +55,48 @@ public ResponseEntity<byte[]> exportSummariesToExcel(
                 : file.getOriginalFilename();
         
         if (baseName == null || baseName.trim().isEmpty()) {
-            baseName = "Stock_Data.xlsx";
+            baseName = "Stock_Data";
         }
         
-        // Ensure it has the correct extension just in case it was missed in the form
-        if (!baseName.toLowerCase().endsWith(".xlsx")) {
-            baseName += ".xlsx";
+        // Strip out Excel extensions and append .csv
+        if (baseName.toLowerCase().endsWith(".xlsx")) {
+            baseName = baseName.substring(0, baseName.length() - 5);
+        } else if (baseName.toLowerCase().endsWith(".xls")) {
+            baseName = baseName.substring(0, baseName.length() - 4);
         }
         
-        String exportFileName = "Summary_" + baseName;
+        String exportFileName = "Summary_" + baseName + ".csv";
 
         // 2. Fetch matching summaries from the DB
         List<AnnouncementSummary> summaries = summaryRetrievalService.getSummariesFromExcel(file);
 
-        // 3. Create the Excel file in memory
-        try (org.apache.poi.xssf.usermodel.XSSFWorkbook workbook = new org.apache.poi.xssf.usermodel.XSSFWorkbook();
-             java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream()) {
-             
-            org.apache.poi.ss.usermodel.Sheet sheet = workbook.createSheet("Summaries");
+        // 3. Build the CSV content in memory using StringBuilder (No Apache POI)
+        StringBuilder csvBuilder = new StringBuilder();
+        
+        // Add Headers
+        csvBuilder.append("Symbol,Document ID,Summary\n");
+
+        // Add Data Rows
+        for (AnnouncementSummary summary : summaries) {
+            csvBuilder.append(escapeCsv(summary.getSymbol())).append(",");
+            csvBuilder.append(escapeCsv(summary.getDocumentId())).append(",");
             
-            // Create Headers
-            org.apache.poi.ss.usermodel.Row headerRow = sheet.createRow(0);
-            headerRow.createCell(0).setCellValue("Symbol");
-            headerRow.createCell(1).setCellValue("Document ID");
-            headerRow.createCell(2).setCellValue("Summary");
-
-            // Populate Data
-            int rowIdx = 1;
-            for (AnnouncementSummary summary : summaries) {
-                org.apache.poi.ss.usermodel.Row row = sheet.createRow(rowIdx++);
-                row.createCell(0).setCellValue(summary.getSymbol());
-                row.createCell(1).setCellValue(summary.getDocumentId());
-                row.createCell(2).setCellValue(summary.getSummaryText());
-            }
-
-            workbook.write(out);
-
-            // 4. Set headers to force a download with the quoted filename
-            org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
-            headers.add("Content-Disposition", "attachment; filename=\"" + exportFileName + "\"");
-
-            return ResponseEntity.ok()
-                    .headers(headers)
-                    .body(out.toByteArray());
+            String text = summary.getSummaryText();
+            csvBuilder.append(escapeCsv(text != null ? text : "")).append("\n");
         }
+
+        // 4. Set headers to force a download with the quoted filename
+        org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
+        headers.add("Content-Disposition", "attachment; filename=\"" + exportFileName + "\"");
+
+        return ResponseEntity.ok()
+                .headers(headers)
+                .body(csvBuilder.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                
     } catch (Exception e) {
-        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(null);
+        e.printStackTrace(); // Prints the exact error lines in your server logs
+        return ResponseEntity.status(org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(("API Error: " + e.getMessage()).getBytes());
     }
 }
 
