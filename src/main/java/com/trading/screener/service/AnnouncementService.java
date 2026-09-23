@@ -17,7 +17,7 @@ import org.springframework.web.client.RestTemplate;
 
 import java.net.URI;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicIntegerArray;
 import java.util.stream.Collectors;
 
 @Service
@@ -35,7 +35,6 @@ public class AnnouncementService {
     @Value("${kafka.topic.pdf-chunks}")
     private String kafkaTopic;
 
-    // Inject the comma-separated phrases from application.properties
     @Value("${screener.ignore.phrases:Copy of Newspaper Publication,Spurt in Volume}")
     private List<String> ignorePhrases;
 
@@ -43,7 +42,8 @@ public class AnnouncementService {
     private final ObjectMapper objectMapper = new ObjectMapper();
     private static final int CHUNK_SIZE = 6000;
     
-    private final AtomicInteger partitionCounter = new AtomicInteger(0);
+    // REPLACED AtomicInteger with an array to track loads for Partitions 0, 1, and 2
+    private final AtomicIntegerArray partitionLoads = new AtomicIntegerArray(3);
 
     public void processAnnouncements(String fileName, String fromDate, String toDate) {
         List<StockData> stocks = stockDataRepository.findByUploadedFileName(fileName);
@@ -92,9 +92,7 @@ public class AnnouncementService {
                 if (root.isArray()) {
                     for (JsonNode announcement : root) {
                         
-                        // ==========================================
                         // 1. DYNAMIC KEYWORD FILTER CHECK
-                        // ==========================================
                         String description = announcement.path("desc").asText("").toLowerCase();
                         boolean shouldSkip = false;
                         
@@ -116,9 +114,7 @@ public class AnnouncementService {
                         
                         if (attachmentUrl != null && attachmentUrl.startsWith("http")) {
                             
-                            // ==========================================
                             // 2. IDEMPOTENCY CHECK
-                            // ==========================================
                             if (summaryRepository.existsByDocumentId(attachmentUrl)) {
                                 System.out.println(" SKIPPING DOWNLOAD: " + symbol + " | Already completely processed in DB -> " + attachmentUrl);
                                 continue; 
@@ -173,8 +169,17 @@ public class AnnouncementService {
 
             if (fullText == null || fullText.trim().isEmpty()) return;
 
-            int targetPartition = partitionCounter.getAndUpdate(p -> (p == 2) ? 0 : p + 1);
+            // ==========================================
+            // NEW ROUTING LOGIC (LEAST LOADED PARTITION)
+            // ==========================================
             int totalChunks = (int) Math.ceil((double) fullText.length() / CHUNK_SIZE);
+            
+            // Get the partition with the fewest assigned chunks
+            int targetPartition = getLeastLoadedPartition();
+            
+            // Add this PDF's chunks to that partition's total count
+            partitionLoads.addAndGet(targetPartition, totalChunks);
+            
             int currentChunk = 1;
 
             System.out.println(" Route File [" + symbol + "] (" + totalChunks + " chunks) -> Partition " + targetPartition);
@@ -211,5 +216,22 @@ public class AnnouncementService {
         } catch (Exception e) {
             System.out.println("Failed to process attachment " + pdfUrl + ": " + e.getMessage());
         }
+    }
+
+    /**
+     * Finds the partition (0, 1, or 2) that currently has the fewest chunks assigned to it.
+     */
+    private int getLeastLoadedPartition() {
+        int minLoad = Integer.MAX_VALUE;
+        int minPartition = 0;
+
+        for (int i = 0; i < partitionLoads.length(); i++) {
+            int currentLoad = partitionLoads.get(i);
+            if (currentLoad < minLoad) {
+                minLoad = currentLoad;
+                minPartition = i;
+            }
+        }
+        return minPartition;
     }
 }
