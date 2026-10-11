@@ -46,7 +46,7 @@ public class ScreenerController {
     }
 
     @GetMapping(value = "/announcements/summaries/export", produces = "text/csv; charset=UTF-8")
-    public ResponseEntity<byte[]> exportSummariesToCsv(@RequestHeader("filename") String filename) {
+    public ResponseEntity<byte[]> exportSummariesToCsv(@RequestParam("filename") String filename) {
         return stockDataService.exportDataByFilename(filename);
     }
 }
