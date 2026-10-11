@@ -111,21 +111,28 @@ public class StockDataService {
         entity.setVolume(dto.getVolume());
         return entity;
     }
-
-    public ResponseEntity<byte[]> exportDataByFilename(String filename) {
+public ResponseEntity<byte[]> exportDataByFilename(String filename) {
         // 1. Fetch data from DB based on the uploadedFileName
         List<StockData> stockDataList = repository.findByUploadedFileName(filename);
 
         if (stockDataList.isEmpty()) {
-            return ResponseEntity.notFound().build(); // Returns 404 if no records match the filename
+            return ResponseEntity.notFound().build(); 
         }
 
         // 2. Generate CSV from the fetched entity list
         byte[] csvBytes = generateCsvBytes(stockDataList);
 
-        // 3. Return as a downloadable attachment
+        // 3. Fix the filename to ensure it only ends with .csv
+        String cleanFilename = filename;
+        int lastDotIndex = filename.lastIndexOf('.');
+        if (lastDotIndex > 0) {
+            // This drops the ".xlsx" or any other extension from the original string
+            cleanFilename = filename.substring(0, lastDotIndex);
+        }
+        String exportFilename = cleanFilename + ".csv";
+
+        // 4. Return as a downloadable attachment
         HttpHeaders headers = new HttpHeaders();
-        String exportFilename = filename.endsWith(".csv") ? filename : filename + ".csv";
         headers.set(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + exportFilename + "\"");
         headers.setContentType(MediaType.parseMediaType("text/csv"));
 
@@ -133,7 +140,6 @@ public class StockDataService {
                 .headers(headers)
                 .body(csvBytes);
     }
-
     private byte[] generateCsvBytes(List<StockData> stockDataList) {
         StringBuilder csvBuilder = new StringBuilder();
         
