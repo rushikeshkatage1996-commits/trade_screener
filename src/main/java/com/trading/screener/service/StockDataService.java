@@ -6,11 +6,15 @@ import com.trading.screener.repository.StockDataRepository;
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.InputStream;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Iterator;
@@ -21,6 +25,7 @@ public class StockDataService {
 
     @Autowired
     private StockDataRepository repository;
+
 
     public void processAndSaveExcel(MultipartFile file) throws Exception {
         String fileName = file.getOriginalFilename();
@@ -105,5 +110,63 @@ public class StockDataService {
         entity.setPercentChange(dto.getPercentChange());
         entity.setVolume(dto.getVolume());
         return entity;
+    }
+
+    public ResponseEntity<byte[]> exportDataByFilename(String filename) {
+        // 1. Fetch data from DB based on the uploadedFileName
+        List<StockData> stockDataList = repository.findByUploadedFileName(filename);
+
+        if (stockDataList.isEmpty()) {
+            return ResponseEntity.notFound().build(); // Returns 404 if no records match the filename
+        }
+
+        // 2. Generate CSV from the fetched entity list
+        byte[] csvBytes = generateCsvBytes(stockDataList);
+
+        // 3. Return as a downloadable attachment
+        HttpHeaders headers = new HttpHeaders();
+        String exportFilename = filename.endsWith(".csv") ? filename : filename + ".csv";
+        headers.set(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + exportFilename + "\"");
+        headers.setContentType(MediaType.parseMediaType("text/csv"));
+
+        return ResponseEntity.ok()
+                .headers(headers)
+                .body(csvBytes);
+    }
+
+    private byte[] generateCsvBytes(List<StockData> stockDataList) {
+        StringBuilder csvBuilder = new StringBuilder();
+        
+        // Add headers matching your table structure
+        csvBuilder.append("Stock_Id,Sr_No,Stock_Name,Symbol,Close_Price,Percent_Change,Volume,Last_Updated,Uploaded_File_Name\n");
+        
+        for (StockData data : stockDataList) {
+            // Using Lombok's auto-generated getters
+            csvBuilder.append(data.getStockId() != null ? data.getStockId() : "").append(",")
+                      .append(data.getSrNo() != null ? data.getSrNo() : "").append(",")
+                      .append(escapeSpecialCharacters(data.getStockName())).append(",")
+                      .append(escapeSpecialCharacters(data.getSymbol())).append(",")
+                      .append(data.getClosePrice() != null ? data.getClosePrice() : "").append(",")
+                      .append(data.getPercentChange() != null ? data.getPercentChange() : "").append(",")
+                      .append(data.getVolume() != null ? data.getVolume() : "").append(",")
+                      .append(data.getLastUpdated() != null ? data.getLastUpdated().toString() : "").append(",")
+                      .append(escapeSpecialCharacters(data.getUploadedFileName()))
+                      .append("\n");
+        }
+        
+        return csvBuilder.toString().getBytes(StandardCharsets.UTF_8);
+    }
+
+    // Helper method to ensure text strings containing commas or quotes don't break the CSV format
+    private String escapeSpecialCharacters(String data) {
+        if (data == null) {
+            return "";
+        }
+        String escapedData = data.replaceAll("\\R", " "); // Remove newlines
+        if (data.contains(",") || data.contains("\"") || data.contains("'")) {
+            data = data.replace("\"", "\"\""); // Escape internal quotes
+            escapedData = "\"" + data + "\"";  // Wrap string in quotes
+        }
+        return escapedData;
     }
 }
