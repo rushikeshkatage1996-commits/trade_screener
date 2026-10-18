@@ -1,7 +1,9 @@
 package com.trading.screener.service;
 
 import com.trading.screener.dto.StockDataDto;
+import com.trading.screener.entity.AnnouncementSummary;
 import com.trading.screener.entity.StockData;
+import com.trading.screener.repository.AnnouncementSummaryRepository;
 import com.trading.screener.repository.StockDataRepository;
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
@@ -19,6 +21,8 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Objects;
+import java.util.stream.Collectors;
 
 @Service
 public class StockDataService {
@@ -26,6 +30,8 @@ public class StockDataService {
     @Autowired
     private StockDataRepository repository;
 
+    @Autowired
+    private AnnouncementSummaryRepository summaryRepository;
 
     public void processAndSaveExcel(MultipartFile file) throws Exception {
         String fileName = file.getOriginalFilename();
@@ -35,7 +41,7 @@ public class StockDataService {
         }
 
         List<StockDataDto> dtoList = new ArrayList<>();
-        DataFormatter dataFormatter = new DataFormatter(); 
+        DataFormatter dataFormatter = new DataFormatter();
 
         try (InputStream is = file.getInputStream(); Workbook workbook = new XSSFWorkbook(is)) {
             Sheet sheet = workbook.getSheetAt(0);
@@ -52,7 +58,7 @@ public class StockDataService {
 
                 Cell firstCell = currentRow.getCell(0);
                 if (firstCell == null || firstCell.getCellType() == CellType.BLANK) {
-                    break; 
+                    break;
                 }
 
                 StockDataDto dto = new StockDataDto();
@@ -64,11 +70,11 @@ public class StockDataService {
                 // 2. Strings
                 dto.setStockName(dataFormatter.formatCellValue(currentRow.getCell(1)).trim());
                 dto.setSymbol(dataFormatter.formatCellValue(currentRow.getCell(2)).trim());
-                
+
                 // 3. Close Price
                 String closePriceStr = cleanNumericString(dataFormatter.formatCellValue(currentRow.getCell(3)));
                 dto.setClosePrice(new BigDecimal(closePriceStr));
-                
+
                 // 4. Percent Change (Now protected from commas)
                 String percentStr = cleanNumericString(dataFormatter.formatCellValue(currentRow.getCell(4)));
                 dto.setPercentChange(new BigDecimal(percentStr));
@@ -85,7 +91,7 @@ public class StockDataService {
         for (StockDataDto dto : dtoList) {
             StockData newStock = mapToEntity(dto);
             newStock.setLastUpdated(LocalDateTime.now());
-            newStock.setUploadedFileName(fileName); 
+            newStock.setUploadedFileName(fileName);
             entitiesToSave.add(newStock);
         }
 
@@ -111,18 +117,29 @@ public class StockDataService {
         entity.setVolume(dto.getVolume());
         return entity;
     }
-public ResponseEntity<byte[]> exportDataByFilename(String filename) {
-        // 1. Fetch data from DB based on the uploadedFileName
+
+    public ResponseEntity<byte[]> exportDataByFilename(String filename) {
+        // 1. Fetch stock data from DB based on the uploadedFileName
         List<StockData> stockDataList = repository.findByUploadedFileName(filename);
 
         if (stockDataList.isEmpty()) {
-            return ResponseEntity.notFound().build(); 
+            return ResponseEntity.notFound().build();
         }
 
-        // 2. Generate CSV from the fetched entity list
-        byte[] csvBytes = generateCsvBytes(stockDataList);
+        // 2. Extract distinct stock symbols from the fetched stock data
+        List<String> symbols = stockDataList.stream()
+                .map(StockData::getSymbol)
+                .filter(Objects::nonNull)
+                .distinct()
+                .collect(Collectors.toList());
 
-        // 3. Fix the filename to ensure it only ends with .csv
+        // 3. Fetch announcement summaries for all these symbols
+        List<AnnouncementSummary> summaries = summaryRepository.findBySymbolIn(symbols);
+
+        // 4. Generate CSV from the fetched announcement summaries
+        byte[] csvBytes = generateCsvBytes(summaries);
+
+        // 5. Fix the filename to ensure it only ends with .csv
         String cleanFilename = filename;
         int lastDotIndex = filename.lastIndexOf('.');
         if (lastDotIndex > 0) {
@@ -131,7 +148,7 @@ public ResponseEntity<byte[]> exportDataByFilename(String filename) {
         }
         String exportFilename = cleanFilename + ".csv";
 
-        // 4. Return as a downloadable attachment
+        // 6. Return as a downloadable attachment
         HttpHeaders headers = new HttpHeaders();
         headers.set(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + exportFilename + "\"");
         headers.setContentType(MediaType.parseMediaType("text/csv"));
@@ -140,26 +157,22 @@ public ResponseEntity<byte[]> exportDataByFilename(String filename) {
                 .headers(headers)
                 .body(csvBytes);
     }
-    private byte[] generateCsvBytes(List<StockData> stockDataList) {
+
+    private byte[] generateCsvBytes(List<AnnouncementSummary> summaries) {
         StringBuilder csvBuilder = new StringBuilder();
-        
-        // Add headers matching your table structure
-        csvBuilder.append("Stock_Id,Sr_No,Stock_Name,Symbol,Close_Price,Percent_Change,Volume,Last_Updated,Uploaded_File_Name\n");
-        
-        for (StockData data : stockDataList) {
-            // Using Lombok's auto-generated getters
-            csvBuilder.append(data.getStockId() != null ? data.getStockId() : "").append(",")
-                      .append(data.getSrNo() != null ? data.getSrNo() : "").append(",")
-                      .append(escapeSpecialCharacters(data.getStockName())).append(",")
-                      .append(escapeSpecialCharacters(data.getSymbol())).append(",")
-                      .append(data.getClosePrice() != null ? data.getClosePrice() : "").append(",")
-                      .append(data.getPercentChange() != null ? data.getPercentChange() : "").append(",")
-                      .append(data.getVolume() != null ? data.getVolume() : "").append(",")
-                      .append(data.getLastUpdated() != null ? data.getLastUpdated().toString() : "").append(",")
-                      .append(escapeSpecialCharacters(data.getUploadedFileName()))
+
+        // Add headers matching announcement_summaries table structure
+        csvBuilder.append("Id,Symbol,Document_Id,Total_Chunks,Summary_Text\n");
+
+        for (AnnouncementSummary summary : summaries) {
+            csvBuilder.append(summary.getId() != null ? summary.getId() : "").append(",")
+                      .append(escapeSpecialCharacters(summary.getSymbol())).append(",")
+                      .append(escapeSpecialCharacters(summary.getDocumentId())).append(",")
+                      .append(summary.getTotalChunks()).append(",")
+                      .append(escapeSpecialCharacters(summary.getSummaryText()))
                       .append("\n");
         }
-        
+
         return csvBuilder.toString().getBytes(StandardCharsets.UTF_8);
     }
 
@@ -169,9 +182,9 @@ public ResponseEntity<byte[]> exportDataByFilename(String filename) {
             return "";
         }
         String escapedData = data.replaceAll("\\R", " "); // Remove newlines
-        if (data.contains(",") || data.contains("\"") || data.contains("'")) {
-            data = data.replace("\"", "\"\""); // Escape internal quotes
-            escapedData = "\"" + data + "\"";  // Wrap string in quotes
+        if (escapedData.contains(",") || escapedData.contains("\"") || escapedData.contains("'")) {
+            escapedData = escapedData.replace("\"", "\"\""); // Escape internal quotes
+            escapedData = "\"" + escapedData + "\"";         // Wrap string in quotes
         }
         return escapedData;
     }
